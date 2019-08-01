@@ -12,6 +12,7 @@ import org.json.JSONException;
 import org.linphone.core.LinphoneCore;
 import org.linphone.core.LinphoneProxyConfig;
 import org.linphone.mediastream.Log;
+import org.apache.cordova.PluginResult;
 
 import java.util.Timer;
 
@@ -68,6 +69,12 @@ public class Linphone extends CordovaPlugin  {
             return true;
         }else if(action.equals("sendDtmf")){
             sendDtmf(args.getString(0), callbackContext);
+            return true;
+        }else if(action.equals("getSpeakerVolume")){
+            getSpeakerVolume(callbackContext);
+            return true;
+        }else if(action.equals("getMicVolume")){
+            getMicVolume(callbackContext);
             return true;
         }
         return false;
@@ -181,6 +188,28 @@ public class Linphone extends CordovaPlugin  {
             callbackContext.success();
         }catch (Exception e){
             Log.d("sendDtmf error", e.getMessage());
+            callbackContext.error(e.getMessage());
+        }
+    }
+
+    public static synchronized void getSpeakerVolume(final CallbackContext callbackContext) {
+        try{
+            Log.d("getSpeakerVolume");
+            PluginResult result = new PluginResult(PluginResult.Status.OK, mLinphoneManager.getSpeakerVolume());
+            callbackContext.sendPluginResult(result);
+        }catch (Exception e){
+            Log.d("getSpeakerVolume error", e.getMessage());
+            callbackContext.error(e.getMessage());
+        }
+    }
+
+    public static synchronized void getMicVolume(final CallbackContext callbackContext) {
+        try{
+            Log.d("getMicVolume");
+            PluginResult result = new PluginResult(PluginResult.Status.OK, mLinphoneManager.getMicVolume());
+            callbackContext.sendPluginResult(result);
+        }catch (Exception e){
+            Log.d("getMicVolume error", e.getMessage());
             callbackContext.error(e.getMessage());
         }
     }

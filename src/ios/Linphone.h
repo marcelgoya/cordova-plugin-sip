@@ -21,5 +21,7 @@
 - (void)toggleSpeaker:(CDVInvokedUrlCommand*)command;
 - (void)toggleMute:(CDVInvokedUrlCommand*)command;
 - (void)sendDtmf:(CDVInvokedUrlCommand*)command;
+- (void)getSpeakerVolume:(CDVInvokedUrlCommand*)command;
+- (void)getMicVolume:(CDVInvokedUrlCommand*)command;
 
 @end

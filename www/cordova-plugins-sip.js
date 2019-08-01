@@ -98,5 +98,23 @@ module.exports =
             "sendDtmf",
             [number]
         );
+    },
+    getSpeakerVolume: function (successCallback, errorCallback) {
+        cordova.exec(
+            successCallback,
+            errorCallback,
+            "Linphone",
+            "getSpeakerVolume",
+            []
+        );
+    },
+    getMicVolume: function (successCallback, errorCallback) {
+        cordova.exec(
+            successCallback,
+            errorCallback,
+            "Linphone",
+            "getMicVolume",
+            []
+        );
     }
 };

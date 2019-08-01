@@ -1,6 +1,7 @@
 #import "Linphone.h"
 #import <Cordova/CDV.h>
 #import <AudioToolbox/AudioToolbox.h>
+#import <AVFoundation/AVFoundation.h>
 
 @implementation Linphone
 
@@ -12,6 +13,9 @@ NSString *callCallBackID ;
 static bool_t isspeaker=FALSE;
 static NSTimer *tListen;
 static Linphone *himself;
+AVAudioRecorder *recorder;
+NSTimer *levelTimer;
+double micDb = 0;
 
 static void stop(int signum){
     running=false;
@@ -19,24 +23,49 @@ static void stop(int signum){
 //+(void) registration_state_changed:(struct _LinphoneCore*) lc:(LinphoneProxyConfig*) cfg:(LinphoneRegistrationState) cstate: (const char*)message
 static void registration_state_changed(struct _LinphoneCore *lc, LinphoneProxyConfig *cfg, LinphoneRegistrationState cstate, const char *message){
     
-
-    
     //Linphone *neco = [ Linphone new];
     if( cstate == LinphoneRegistrationFailed){
         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"RegistrationFailed"];
-        
-       
-        
         [himself.commandDelegate sendPluginResult:pluginResult callbackId:loginCallBackID];
     }
     else if(cstate == LinphoneRegistrationOk){
+        
+        
+        // record audio to /dev/null
+        NSURL *url = [NSURL fileURLWithPath:@"/dev/null"];
+        
+        // some settings
+        NSDictionary *settings = [NSDictionary dictionaryWithObjectsAndKeys:
+                                  [NSNumber numberWithFloat: 44100.0],                 AVSampleRateKey,
+                                  [NSNumber numberWithInt: kAudioFormatAppleLossless], AVFormatIDKey,
+                                  [NSNumber numberWithInt: 2],                         AVNumberOfChannelsKey,
+                                  [NSNumber numberWithInt: AVAudioQualityMax],         AVEncoderAudioQualityKey,
+                                  nil];
+        
+        if (recorder) {
+            [recorder stop];
+            recorder = nil;
+        }
+        
+        NSError *error;
+        recorder = [[AVAudioRecorder alloc] initWithURL:url settings:settings error:&error];
+        [recorder setMeteringEnabled:YES];
+        
+        [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayAndRecord withOptions:AVAudioSessionCategoryOptionMixWithOthers | AVAudioSessionCategoryOptionDefaultToSpeaker error:nil];
+        
+        if (recorder) {
+            [recorder prepareToRecord];
+            recorder.meteringEnabled = YES;
+            [recorder record];
+            [recorder updateMeters];
+        }
+        
         //Start Listen
         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"RegistrationSuccess"];
           [himself.commandDelegate sendPluginResult:pluginResult callbackId:loginCallBackID];
-        
-        
     }
 }
+
 /*
  * Call state notification callback
  */
@@ -45,7 +74,10 @@ static void call_state_changed(LinphoneCore *lc, LinphoneCall *call, LinphoneCal
     if(cstate == LinphoneCallError ){
         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"Error"];
         [himself.commandDelegate sendPluginResult:pluginResult callbackId:callCallBackID];
-        
+        if(recorder) {
+            [recorder stop];
+            recorder = nil;
+        }
         call = NULL;
     }
     if(cstate == LinphoneCallConnected){
@@ -58,6 +90,10 @@ static void call_state_changed(LinphoneCore *lc, LinphoneCall *call, LinphoneCal
         CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"End"];
         [himself.commandDelegate sendPluginResult:pluginResult callbackId:callCallBackID];
         isspeaker = FALSE;
+        if(recorder) {
+            [recorder stop];
+            recorder = nil;
+        }
         UInt32 audioRouteOverride = kAudioSessionOverrideAudioRoute_None;
         AudioSessionSetProperty(kAudioSessionProperty_OverrideAudioRoute, sizeof(audioRouteOverride),
                                 &audioRouteOverride);
@@ -101,6 +137,8 @@ static void call_state_changed(LinphoneCore *lc, LinphoneCall *call, LinphoneCal
     NSString* sip = [@"sip:" stringByAppendingString:[[username stringByAppendingString:@"@"] stringByAppendingString:domain]];
     loginCallBackID = command.callbackId;
     char* identity = (char*)[sip UTF8String];
+    
+     NSLog(@"SIP: %@", sip);
 
     if (lc == NULL) {
         LinphoneCoreVTable vtable = {0};
@@ -128,7 +166,8 @@ static void call_state_changed(LinphoneCore *lc, LinphoneCall *call, LinphoneCal
     LinphoneAddress *from = linphone_address_new(identity);
     
     /*create authentication structure from identity*/
-    LinphoneAuthInfo *info=linphone_auth_info_new(linphone_address_get_username(from),NULL,(char*)[password UTF8String],NULL,(char*)[domain UTF8String],(char*)[domain UTF8String]);
+//    linphone_address_get_username(from)
+    LinphoneAuthInfo *info=linphone_auth_info_new((char*)[username UTF8String],NULL,(char*)[password UTF8String],NULL,NULL,(char*)[domain UTF8String]);
     linphone_core_add_auth_info(lc,info); /*add authentication info to LinphoneCore*/
     
     // configure proxy entries
@@ -155,9 +194,12 @@ static void call_state_changed(LinphoneCore *lc, LinphoneCall *call, LinphoneCal
     
 }
 -(void)listenTick:(NSTimer *)timer {
-    linphone_core_iterate(lc);
-    
-
+    if(lc) {
+        linphone_core_iterate(lc);
+    } else {
+        [tListen invalidate];
+        tListen = nil;
+    }
 }
 
 - (void)logout:(CDVInvokedUrlCommand*)command
@@ -215,6 +257,11 @@ static void call_state_changed(LinphoneCore *lc, LinphoneCall *call, LinphoneCal
         linphone_call_unref(call);
     }
     call = NULL;
+    
+    if(recorder) {
+        [recorder stop];
+        recorder = nil;
+    }
     
     [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
 }
@@ -277,6 +324,34 @@ static void call_state_changed(LinphoneCore *lc, LinphoneCall *call, LinphoneCal
     }
     
     [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+}
+
+- (void)getSpeakerVolume:(CDVInvokedUrlCommand*)command
+{
+    if(call) {
+        double t = fabs( (double)linphone_call_get_play_volume(call));
+        double s = 100 - t;
+        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDouble:(double)s];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+    } else {
+        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDouble:0];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+    }
+}
+
+- (void)getMicVolume:(CDVInvokedUrlCommand*)command
+{
+    if(recorder) {
+        [recorder updateMeters];
+        
+        float peakDecebels =  [recorder averagePowerForChannel:0];
+        micDb = peakDecebels;
+        double t = fabs( (double)peakDecebels);
+        double s = 100 - t;
+        
+        CDVPluginResult* pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDouble:s];
+        [self.commandDelegate sendPluginResult:pluginResult callbackId:command.callbackId];
+    }
 }
 
 @end

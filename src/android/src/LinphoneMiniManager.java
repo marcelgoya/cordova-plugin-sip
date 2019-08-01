@@ -52,6 +52,11 @@ import org.linphone.core.SubscriptionState;
 import org.linphone.mediastream.Log;
 import org.linphone.mediastream.video.capture.hwconf.AndroidCameraConfiguration;
 import org.linphone.mediastream.video.capture.hwconf.AndroidCameraConfiguration.AndroidCamera;
+import org.linphone.core.LinphoneCallStats;
+
+import android.media.AudioFormat;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
 
 import java.io.File;
 import java.io.IOException;
@@ -72,6 +77,40 @@ public class LinphoneMiniManager implements LinphoneCoreListener {
 	public CallbackContext mCallbackContext;
 	public CallbackContext mLoginCallbackContext;
 
+	private AudioRecord ar = null;
+	private int minSize;
+
+	public void startRecorder() {
+		minSize= AudioRecord.getMinBufferSize(8000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+		ar = new AudioRecord(MediaRecorder.AudioSource.MIC, 8000,AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,minSize);
+		ar.startRecording();
+	}
+
+	public void stopRecorder() {
+		if (ar != null) {
+			ar.stop();
+		}
+	}
+
+	public float getAmplitude() {
+		short[] buffer = new short[minSize];
+		int read = ar.read(buffer, 0, minSize);
+		int max = 0;
+		for (short s : buffer)
+		{
+			if (Math.abs(s) > max)
+			{
+				max = Math.abs(s);
+			}
+		}
+
+		double dB = 20*Math.log10(max / 32767.0);
+		double t = Math.abs(dB);
+		double s = 100 - t;
+
+		return (float)s;
+	}
+
 	public LinphoneMiniManager(Context c) {
 		mContext = c;
 		LinphoneCoreFactory.instance().setDebugMode(true, "Linphone Mini");
@@ -82,13 +121,11 @@ public class LinphoneMiniManager implements LinphoneCoreListener {
 			copyAssetsFromPackage(basePath);
 			mLinphoneCore = LinphoneCoreFactory.instance().createLinphoneCore(this, basePath + "/.linphonerc", basePath + "/linphonerc", null, mContext);
 			initLinphoneCoreValues(basePath);
-
 			setUserAgent();
 			setFrontCamAsDefault();
 			startIterate();
 			mInstance = this;
 	        mLinphoneCore.setNetworkReachable(true); // Let's assume it's true
-
 			mCaptureView = new SurfaceView(mContext);
 
 		} catch (LinphoneCoreException e) {
@@ -128,8 +165,6 @@ public class LinphoneMiniManager implements LinphoneCoreListener {
 		mTimer = new Timer("LinphoneMini scheduler");
 		mTimer.schedule(lTask, 0, 20);
 	}
-
-
 
 	private void setUserAgent() {
 		try {
@@ -233,6 +268,16 @@ public class LinphoneMiniManager implements LinphoneCoreListener {
         return false;
     }
 
+	public float getSpeakerVolume() {
+		double t = Math.abs(mLinphoneCore.getCurrentCall().getPlayVolume());
+		double s = 100 - t;
+		return (float)s;
+	}
+
+	public float getMicVolume() {
+		return this.getAmplitude();
+	}
+
     public boolean toggleMute() {
         if (mLinphoneCore.isIncall()) {
 			boolean enabled = !mLinphoneCore.isMicMuted();
@@ -275,6 +320,7 @@ public class LinphoneMiniManager implements LinphoneCoreListener {
 			if(cstate == State.Connected)
 			{
 				mCallbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK, "Connected"));
+				this.startRecorder();
 			}
 			else if(cstate == State.IncomingReceived)
 			{
@@ -283,10 +329,12 @@ public class LinphoneMiniManager implements LinphoneCoreListener {
 			else if(cstate == State.CallEnd)
 			{
 				mCallbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK,"End"));
+				this.stopRecorder();
 			}
 			else if(cstate == State.Error)
 			{
 				mCallbackContext.sendPluginResult(new PluginResult(PluginResult.Status.OK,"Error"));
+				this.stopRecorder();
 			}
 		Log.d("Call state: " + cstate + "(" + message + ")");
 	}
@@ -489,6 +537,7 @@ public class LinphoneMiniManager implements LinphoneCoreListener {
 
 	public void hangup(CallbackContext callbackContext) {
 		terminateCall();
+		this.stopRecorder();
 	}
 
 	public void login(String username, String password, String domain, CallbackContext callbackContext) {
